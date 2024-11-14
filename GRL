@@ -1,0 +1,28 @@
+# CCC
+class GRL(nn.Module):
+    def __init__(self, loss_fcn):
+        super(gaosizhengfu, self).__init__()
+        self.loss_fcn = loss_fcn
+        self.reduction = loss_fcn.reduction
+        self.loss_fcn.reduction = 'none'  # required to apply SL to each element
+
+    def forward(self, pred, true, auto_iou=0.5):
+        sigma = 0.1
+        loss = self.loss_fcn(pred, true)
+        if auto_iou < 0.2:
+            auto_iou = 0.2
+        b1 = true <= auto_iou - sigma
+        a1 = torch.exp(-((true - auto_iou) ** 2) / (2 * sigma ** 2)) + 1
+        b2 = (true > (auto_iou - 0.1)) & (true < auto_iou + sigma)
+        a2 = torch.exp(-((true - auto_iou) ** 2) / (2 * sigma ** 2)) + 1  # a2 = math.exp(1.0 - auto_iou) ccc
+        b3 = true >= auto_iou + sigma
+        a3 = torch.exp(-((true - auto_iou) ** 2) / (2 * sigma ** 2)) + 1
+        modulating_weight = a1 * b1 + a2 * b2 + a3 * b3
+        loss *= modulating_weight
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss
