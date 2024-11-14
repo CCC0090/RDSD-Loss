@@ -1,0 +1,153 @@
+import torch
+import numpy as np
+from utils.general import box_iou, box_iou_v5, Wasserstein
+import torch.nn.functional as F
+
+ def IoG(gt_box, pre_box):
+     inter_xmin = torch.max(gt_box[:, 0], pre_box[:, 0])
+     inter_ymin = torch.max(gt_box[:, 1], pre_box[:, 1])
+     inter_xmax = torch.min(gt_box[:, 2], pre_box[:, 2])
+     inter_ymax = torch.min(gt_box[:, 3], pre_box[:, 3])
+     Iw = torch.clamp(inter_xmax - inter_xmin, min=0)
+     Ih = torch.clamp(inter_ymax - inter_ymin, min=0)
+     I = Iw * Ih
+     G = ((gt_box[:, 2] - gt_box[:, 0]) * (gt_box[:, 3] - gt_box[:, 1])).clamp(1e-6)
+     return I / G
+
+# 原始版
+# def Ngaussian_wasserstein_distance(box1, box2, eps=1e-7, constant=12.8, reg_weight=0.01):
+#     # Get the coordinates of bounding boxes
+#     # 获取框1的中心点坐标和宽度高度
+#     b1_cx, b1_cy, b1_w, b1_h = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
+#     # 获取框2的中心点坐标和宽度高度
+#     b2_cx, b2_cy, b2_w, b2_h = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
+#     # 由x1y1x2y2计算框架的中心点坐标和宽度高度
+#     # b1_cx, b1_cy, b1_w, b1_h = (box1[:, 0] + box1[:, 2]) / 2, (box1[:, 1] + box1[:, 3]) / 2, box1[:, 2] - box1[:, 0], box1[:, 3] - box1[:, 1]
+#     # b2_cx, b2_cy, b2_w, b2_h = (box2[:, 0] + box2[:, 2]) / 2, (box2[:, 1] + box2[:, 3]) / 2, box2[:, 2] - box2[:, 0], box2[:, 3] - box2[:, 1]
+#
+#     pred_mean = torch.stack([b1_cx, b1_cy], dim=1)
+#     target_mean = torch.stack([b2_cx, b2_cy], dim=1)
+#
+#     pred_covariance = torch.diag_embed(torch.stack([b1_w, b1_h], dim=1).float(), dim1=-2, dim2=-1)
+#     target_covariance = torch.diag_embed(torch.stack([b2_w, b2_h], dim=1).float(), dim1=-2, dim2=-1)
+#
+#     pred_distribution = torch.distributions.MultivariateNormal(pred_mean, pred_covariance)
+#     target_distribution = torch.distributions.MultivariateNormal(target_mean, target_covariance)
+#
+#     wasserstein_distance = torch.sqrt(torch.sum((pred_distribution.mean - target_distribution.mean) ** 2)) + \
+#                            torch.sum(torch.sqrt(torch.linalg.det(pred_distribution.covariance_matrix + eps))) + \
+#                            torch.sum(torch.sqrt(torch.linalg.det(target_distribution.covariance_matrix + eps)))
+#
+#     # Regularization term added
+#     reg_term = reg_weight * (torch.sum(torch.abs(torch.stack([b1_w, b1_h], dim=1))) + torch.sum(torch.abs(torch.stack([b2_w, b2_h], dim=1))))
+#
+#     distance = torch.exp(- (wasserstein_distance + reg_term) / constant)
+#
+#     normalized_distance = F.softmax(distance, dim=0)
+#
+#     return normalized_distance
+
+# 简易版
+def Ngaussian_wasserstein_distance(box1, box2, sigma=1.0):
+    # # 计算框架的中心点坐标和宽度高度
+    # b1_cx, b1_cy, b1_w, b1_h = (box1[:, 0] + box1[:, 2]) / 2, (box1[:, 1] + box1[:, 3]) / 2, box1[:, 2] - box1[:, 0], box1[:, 3] - box1[:, 1]
+    # b2_cx, b2_cy, b2_w, b2_h = (box2[:, 0] + box2[:, 2]) / 2, (box2[:, 1] + box2[:, 3]) / 2, box2[:, 2] - box2[:, 0], box2[:, 3] - box2[:, 1]
+    # 直接找到中心点坐标和WH
+    b1_cx, b1_cy, b1_w, b1_h = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
+    b2_cx, b2_cy, b2_w, b2_h = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
+
+    # 计算距离矩阵的平方
+    cx_L2Norm = torch.pow((b1_cx - b2_cx), 2)
+    cy_L2Norm = torch.pow((b1_cy - b2_cy), 2)
+    p1 = cx_L2Norm + cy_L2Norm
+
+    w_FroNorm = torch.pow((b1_w - b2_w) / 2, 2)
+    h_FroNorm = torch.pow((b1_h - b2_h) / 2, 2)
+    p2 = w_FroNorm + h_FroNorm
+
+    # 计算高斯 Wasserstein 距离
+    distance = torch.sqrt(p1 + p2) / sigma
+
+    # 对距离进行归一化
+    normalized_distance = F.softmax(distance, dim=0)
+
+    return normalized_distance
+
+# def smooth_ln(x, deta=0.5):
+#     return torch.where(
+#         torch.le(x, deta),
+#         -torch.log(1 - x),
+#         ((x - deta) / (1 - deta)) - np.log(1 - deta)
+#     )
+
+
+#ccc 2 * (x - t) / (1 - x ** 2)---->2 * (x - t) / (1 - t ** 2)
+def smooth_ln(x, t=0.5):
+    return torch.where(
+        torch.le(x, t),
+        torch.log((1 + x) / (1 - x)),
+        2 * (x - t) / (1 - t ** 2) + np.log((1 + t) / (1 - t))
+    )
+
+
+def repulsion_loss_torch(pbox, gtbox, deta=0.5, pnms=0.1, gtnms=0.1, x1x2y1y2=False):#x1x2y1y2=False
+    #print('this is the real nwd_rep_loss')
+    repgt_loss = 0.0
+    repbox_loss = 0.0
+    pbox = pbox.detach()
+    gtbox = gtbox.detach()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    gtbox_cpu = gtbox.cuda().data.cpu().numpy()
+    pgiou = box_iou_v5(pbox, gtbox, x1y1x2y2=x1x2y1y2)
+    #pgiou = Wasserstein(pbox, gtbox, x1y1x2y2=x1x2y1y2)
+    pgiou = pgiou.cuda().data.cpu().numpy()
+    ppiou = box_iou_v5(pbox, pbox, x1y1x2y2=x1x2y1y2)
+    #ppiou = Wasserstein(pbox, pbox, x1y1x2y2=x1x2y1y2)
+    ppiou = ppiou.cuda().data.cpu().numpy()
+    # t1 = time.time()
+    len = pgiou.shape[0]
+
+
+    for j in range(len):
+        for z in range(j, len):
+            ppiou[j, z] = 0
+            # if int(torch.sum(gtbox[j] == gtbox[z])) == 4:
+            # if int(torch.sum(gtbox_cpu[j] == gtbox_cpu[z])) == 4:
+            # if int(np.sum(gtbox_numpy[j] == gtbox_numpy[z])) == 4:
+            if (gtbox_cpu[j][0]==gtbox_cpu[z][0]) and (gtbox_cpu[j][1]==gtbox_cpu[z][1]) and (gtbox_cpu[j][2]==gtbox_cpu[z][2]) and (gtbox_cpu[j][3]==gtbox_cpu[z][3]):
+                pgiou[j, z] = 0
+                pgiou[z, j] = 0
+                ppiou[z, j] = 0
+
+    # t2 = time.time()
+    # print("for cycle cost time is: ", t2 - t1, "s")
+    pgiou = torch.from_numpy(pgiou).cuda().detach()
+    ppiou = torch.from_numpy(ppiou).cuda().detach()
+    # repgt
+    max_iou, argmax_iou = torch.max(pgiou, 1)
+    pg_mask = torch.gt(max_iou, gtnms)
+    num_repgt = pg_mask.sum()
+    if num_repgt > 0:
+        iou_pos = pgiou[pg_mask, :]
+        max_iou_sec, argmax_iou_sec = torch.max(iou_pos, 1)
+        pbox_sec = pbox[pg_mask, :]
+        gtbox_sec = gtbox[argmax_iou_sec, :]
+        # CCC修改
+        #IOG = IoG(gtbox_sec, pbox_sec)
+        IOG = Ngaussian_wasserstein_distance(gtbox_sec, pbox_sec)
+        repgt_loss = smooth_ln(IOG, deta)
+        repgt_loss = repgt_loss.mean()
+
+    # repbox
+    pp_mask = torch.gt(ppiou, pnms)  
+    num_pbox = pp_mask.sum()
+    if num_pbox > 0:
+        repbox_loss = smooth_ln(ppiou, deta)
+        repbox_loss = repbox_loss.mean()
+    # mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+    # print(mem)
+    torch.cuda.empty_cache()
+
+    return repgt_loss, repbox_loss
+
+
