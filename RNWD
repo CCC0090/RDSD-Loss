@@ -1,0 +1,33 @@
+# # CCC 
+# def wasserstein_loss(pred, target, eps=1e-7, constant=12.8, reg_weight=0.1):#0.01
+#     # Calculate anchor area
+#     anchor_area = pred[:, 2] * pred[:, 3]
+#
+#     # Get indices of anchors with area less than 32*32
+#     valid_indices = anchor_area < 32 * 32
+#
+#     if torch.any(valid_indices):
+#         # Filter out anchors with area greater than or equal to 32*32
+#         pred = pred[valid_indices]
+#         target = target[valid_indices]
+#
+#         pred_mean = pred[:, :2]
+#         target_mean = target[:, :2]
+#
+#         pred_covariance = torch.diag_embed(pred[:, 2:4].float(), dim1=-2, dim2=-1)
+#         target_covariance = torch.diag_embed(target[:, 2:4].float(), dim1=-2, dim2=-1)
+#
+#         pred_distribution = torch.distributions.MultivariateNormal(pred_mean, pred_covariance)
+#         target_distribution = torch.distributions.MultivariateNormal(target_mean, target_covariance)
+#
+#         wasserstein_distance = torch.sqrt(torch.sum((pred_distribution.mean - target_distribution.mean) ** 2)) + \
+#                                torch.sum(torch.sqrt(torch.linalg.det(pred_distribution.covariance_matrix + eps))) + \
+#                                torch.sum(torch.sqrt(torch.linalg.det(target_distribution.covariance_matrix + eps)))
+#
+#         # Regularization term added
+#         reg_term = reg_weight * (torch.sum(torch.abs(pred[:, 2:4])) + torch.sum(torch.abs(target[:, 2:4])))
+#
+#         return torch.exp(- (wasserstein_distance + reg_term) / constant)
+#     else:
+#         # Return None if no anchors have area less than 32*32
+#         return None
